@@ -1,4 +1,6 @@
 import { Battles } from './components/Battles';
+import { DriverFocus } from './components/DriverFocus';
+import { GapChart } from './components/GapChart';
 import { Header } from './components/Header';
 import { PitStops } from './components/PitStops';
 import { RaceControl } from './components/RaceControl';
@@ -24,12 +26,16 @@ export function App() {
     );
   }
 
-  // Laid out for a portrait 1080x1920 monitor: tall track map on the left,
-  // timing tower and strategy panels on the right, race control along the bottom.
+  // Laid out for a portrait 1080x1920 monitor: track map, gap chart and driver focus on the
+  // left; timing tower, strategy, battles, pit stops and race control on the right.
   return (
     <div className="layout">
       <Header />
-      <TrackMap />
+      <div className="main">
+        <TrackMap />
+        <GapChart />
+        <DriverFocus />
+      </div>
       <TimingTower />
       <div className="side">
         <TyreStrategy />

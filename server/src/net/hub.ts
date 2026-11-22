@@ -6,6 +6,7 @@ import { DelayBuffer } from '../pipeline/delay.js';
 import { LiveStore } from '../pipeline/store.js';
 import { loadSession, loadLiveSnapshot } from '../replay/loader.js';
 import { ReplayPlayer } from '../replay/player.js';
+import { CarDataReplay } from '../replay/carData.js';
 import { outlineForCircuit } from '../track/circuit.js';
 import type {
   ClientMessage,
@@ -49,6 +50,9 @@ export class Hub {
   private delay = new DelayBuffer<TelemetryEvent>(0);
   private meta: Meta | null = null;
   private player: ReplayPlayer | null = null;
+  private carReplay: CarDataReplay | null = null;
+  /** Drivers whose car telemetry is streamed (at most 2). */
+  private focus: number[] = [];
   private live: { source: { start(): Promise<void>; stop(): void } } | null = null;
   private liveStatus: LiveStatus;
   private status: { status: Status; message?: string } = { status: 'idle' };
@@ -76,6 +80,7 @@ export class Hub {
     this.clients.add(send);
     send({ type: 'status', ...this.status });
     send({ type: 'live', live: this.liveStatus });
+    send({ type: 'focus', drivers: this.focus });
     if (this.meta) {
       send(this.metaMessage());
       send({ type: 'snapshot', state: this.store.snapshot() });
@@ -107,6 +112,9 @@ export class Hub {
       case 'delay':
         this.delay.setDelay(msg.delayMs);
         break;
+      case 'focus':
+        await this.setFocus(msg.drivers);
+        break;
     }
     if (this.meta) this.broadcast({ type: 'clock', clock: this.clock() });
   }
@@ -121,6 +129,7 @@ export class Hub {
       if (token !== this.loadToken) return; // a newer load started meanwhile
       this.meta = loaded;
       this.player = new ReplayPlayer(loaded.events, loaded.start, loaded.end);
+      this.carReplay = new CarDataReplay(this.client, sessionKey);
       this.broadcast(this.metaMessage());
       this.seek(loaded.start);
       this.setStatus('ready', `${loaded.events.length.toLocaleString()} events`);
@@ -138,6 +147,7 @@ export class Hub {
     const token = ++this.loadToken;
     this.stopLive();
     this.player = null;
+    this.carReplay = null;
     if (!this.liveStatus.configured) {
       this.setStatus('error', 'Live data needs an OpenF1 sponsor login in the .env file (see README).');
       return;
@@ -189,6 +199,7 @@ export class Hub {
   private onLiveMessage(m: LiveMessage): void {
     this.liveStatus.lastMessageAt = Date.now();
     if (m.kind === 'event') {
+      if (m.event.topic === 'car_data' && !this.focus.includes(Number(m.event.data.driver_number))) return;
       this.delay.push(m.event);
       return;
     }
@@ -221,10 +232,30 @@ export class Hub {
     this.store.reset();
     for (const e of history) this.store.apply(e);
     this.broadcast({ type: 'snapshot', state: this.store.snapshot() });
+    this.sendCarBackfill(this.player.state.t);
+  }
+
+  private async setFocus(drivers: number[]): Promise<void> {
+    this.focus = [...new Set(drivers.map(Number).filter(Number.isFinite))].slice(0, 2);
+    this.broadcast({ type: 'focus', drivers: this.focus });
+    if (this.player && this.carReplay) {
+      await this.carReplay.ensure(this.focus, this.player.state.t);
+      this.sendCarBackfill(this.player.state.t);
+    }
+  }
+
+  /** The last few seconds of telemetry for focused drivers, so traces start filled. */
+  private sendCarBackfill(t: number): void {
+    if (!this.carReplay) return;
+    const backfill = this.carReplay.seek(t).filter((e) => this.focus.includes(Number(e.data.driver_number)));
+    if (backfill.length > 0) this.broadcast({ type: 'events', events: backfill });
   }
 
   private tick(): void {
-    if (this.player) for (const e of this.player.tick()) this.delay.push(e);
+    if (this.player) {
+      for (const e of this.player.tick()) this.delay.push(e);
+      if (this.carReplay && this.focus.length > 0) for (const e of this.carReplay.advance(this.focus, this.player.state.t)) this.delay.push(e);
+    }
     const ready = this.delay.drain();
     if (ready.length > 0) {
       for (const e of ready) this.store.apply(e);
@@ -279,6 +310,10 @@ export class Hub {
 
 /** Location is the bulk of the traffic; send only what the map needs. */
 function slim(e: TelemetryEvent): TelemetryEvent {
+  if (e.topic === 'car_data') {
+    const { driver_number, speed, throttle, brake, n_gear, drs, rpm, date } = e.data;
+    return { topic: e.topic, t: e.t, data: { driver_number, speed, throttle, brake, n_gear, drs, rpm, date } };
+  }
   if (e.topic !== 'location') return e;
   const { driver_number, x, y, date } = e.data;
   return { topic: e.topic, t: e.t, data: { driver_number, x, y, date } };

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { addSample, resetCars, syncClock } from './motion';
+import { addCarSample, resetTelemetry } from './telemetry';
 import type {
   ClientMessage,
   ClockState,
@@ -22,6 +23,8 @@ export interface DashboardState extends Omit<StoreSnapshot, 'location'> {
   totalLaps: number | null;
   clock: (ClockState & { receivedAt: number }) | null;
   live: LiveStatus;
+  /** Drivers whose telemetry is shown in the driver focus panel. */
+  focus: number[];
 }
 
 export const useDashboard = create<DashboardState>(() => ({
@@ -33,6 +36,8 @@ export const useDashboard = create<DashboardState>(() => ({
   totalLaps: null,
   clock: null,
   live: { configured: false, feed: 'off' },
+  focus: [],
+  gap_history: {},
   position: {},
   intervals: {},
   laps: {},
@@ -72,6 +77,7 @@ function handle(msg: ServerMessage) {
       break;
     case 'meta':
       resetCars();
+      resetTelemetry();
       useDashboard.setState({
         session: msg.session,
         track: msg.track,
@@ -82,6 +88,7 @@ function handle(msg: ServerMessage) {
     case 'snapshot': {
       const { location, ...rest } = msg.state;
       resetCars();
+      resetTelemetry();
       for (const [driver, rec] of Object.entries(location)) addSample(driver, Date.parse(String(rec.date)), Number(rec.x), Number(rec.y));
       useDashboard.setState(rest);
       break;
@@ -91,6 +98,9 @@ function handle(msg: ServerMessage) {
       break;
     case 'live':
       useDashboard.setState({ live: msg.live });
+      break;
+    case 'focus':
+      useDashboard.setState({ focus: msg.drivers });
       break;
     case 'clock':
       syncClock(msg.clock);
@@ -108,6 +118,17 @@ function applyEvents(events: TelemetryEvent[]) {
       case 'location':
         addSample(driver, e.t, Number(e.data.x), Number(e.data.y));
         break;
+      case 'car_data':
+        addCarSample(driver, {
+          t: e.t,
+          speed: Number(e.data.speed) || 0,
+          throttle: Number(e.data.throttle) || 0,
+          brake: Number(e.data.brake) || 0,
+          gear: Number(e.data.n_gear) || 0,
+          drs: Number(e.data.drs) || 0,
+          rpm: Number(e.data.rpm) || 0,
+        });
+        break;
       case 'position':
       case 'intervals':
       case 'laps':
@@ -122,6 +143,7 @@ function applyEvents(events: TelemetryEvent[]) {
           else list.push(e.data);
           hist[driver] = list;
         }
+        if (e.topic === 'laps') recordGap(next, s, driver, e.data);
         if (e.topic === 'laps' && isFaster(e.data, (next.best_laps ??= { ...s.best_laps })[driver])) next.best_laps![driver] = e.data;
         break;
       }
@@ -164,4 +186,25 @@ export function setDelay(ms: number) {
     /* private mode: keep it for this session only */
   }
   send({ type: 'delay', delayMs: v });
+}
+
+/** Mirror of the server's gap history: note the gap to the leader as each lap starts. */
+function recordGap(next: Partial<DashboardState>, s: DashboardState, driver: string, lap: OpenF1Record) {
+  const lapNo = Number(lap.lap_number);
+  if (!Number.isFinite(lapNo)) return;
+  const position = next.position ?? s.position;
+  const intervals = next.intervals ?? s.intervals;
+  const gap = position[driver]?.position === 1 ? 0 : intervals[driver]?.gap_to_leader;
+  if (typeof gap !== 'number') return;
+  const all = (next.gap_history ??= { ...s.gap_history });
+  const list = [...(all[driver] ?? [])];
+  if (list.at(-1)?.[0] === lapNo) list[list.length - 1] = [lapNo, gap];
+  else list.push([lapNo, gap]);
+  all[driver] = list;
+}
+
+export function toggleFocus(driver: number) {
+  const { focus } = useDashboard.getState();
+  const next = focus.includes(driver) ? focus.filter((d) => d !== driver) : [...focus, driver].slice(-2);
+  send({ type: 'focus', drivers: next });
 }

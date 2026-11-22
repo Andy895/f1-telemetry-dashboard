@@ -1,5 +1,5 @@
 import { COMPOUND_COLOUR, formatGap, formatLapTime } from '../format';
-import { useDashboard } from '../state';
+import { toggleFocus, useDashboard } from '../state';
 
 export function TimingTower() {
   const drivers = useDashboard((s) => s.drivers);
@@ -8,6 +8,7 @@ export function TimingTower() {
   const laps = useDashboard((s) => s.laps);
   const best = useDashboard((s) => s.best_laps);
   const stints = useDashboard((s) => s.stints);
+  const focus = useDashboard((s) => s.focus);
 
   const rows = Object.values(position)
     .filter((p) => drivers[String(p.driver_number)])
@@ -43,7 +44,12 @@ export function TimingTower() {
         const isFastest = bestLap && Number(bestLap.lap_duration) === fastest;
         const close = typeof iv?.interval === 'number' && iv.interval < 1 && p.position !== 1;
         return (
-          <div className="tower-row" key={id}>
+          <div
+            className={`tower-row ${focus.includes(Number(id)) ? 'focused' : ''}`}
+            key={id}
+            onClick={() => toggleFocus(Number(id))}
+            title="Click to follow this driver's telemetry"
+          >
             <span className="pos">{String(p.position)}</span>
             <span className="driver">
               <i className="team" style={{ background: `#${d.team_colour}` }} />

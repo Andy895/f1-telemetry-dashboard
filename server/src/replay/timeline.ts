@@ -10,6 +10,7 @@ const TIME_FIELD: Record<Topic, string> = {
   pit: 'date',
   race_control: 'date',
   weather: 'date',
+  car_data: 'date',
 };
 
 export function recordTime(topic: Topic, rec: OpenF1Record): number | null {
