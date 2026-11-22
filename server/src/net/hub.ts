@@ -1,31 +1,67 @@
+import { LiveSource } from '../live/source.js';
+import type { LiveMessage } from '../live/messages.js';
+import type { TokenManager } from '../openf1/auth.js';
 import type { OpenF1Client } from '../openf1/client.js';
 import { DelayBuffer } from '../pipeline/delay.js';
 import { LiveStore } from '../pipeline/store.js';
-import { loadSession, type LoadedSession } from '../replay/loader.js';
+import { loadSession, loadLiveSnapshot } from '../replay/loader.js';
 import { ReplayPlayer } from '../replay/player.js';
-import type { ClientMessage, ServerMessage, TelemetryEvent } from '../types.js';
+import { outlineForCircuit } from '../track/circuit.js';
+import type {
+  ClientMessage,
+  ClockState,
+  DriverInfo,
+  LiveStatus,
+  ServerMessage,
+  SessionInfo,
+  TelemetryEvent,
+  TrackOutline,
+} from '../types.js';
 
 const TICK_MS = 100;
 const CLOCK_EVERY_MS = 500;
 
 type Send = (msg: ServerMessage) => void;
+type Status = 'idle' | 'loading' | 'ready' | 'error';
+
+interface Meta {
+  session: SessionInfo;
+  drivers: DriverInfo[];
+  track: TrackOutline | null;
+  totalLaps: number | null;
+}
+
+export interface HubOptions {
+  tokens?: TokenManager | null;
+  mqttUrl?: string;
+  mqttUsername?: string;
+  /** Injected for tests. */
+  createLiveSource?: (onMessage: (m: LiveMessage) => void, onStatus: (s: LiveStatus['feed'], d?: string) => void) => { start(): Promise<void>; stop(): void };
+}
 
 /**
- * Owns the one active session: replay player -> sync delay -> store -> connected browsers.
- * Phase 1 adds a live MQTT source that feeds the same delay buffer instead of the player.
+ * Owns the one active session and its source (a replay of a past session, or the live feed):
+ * source -> sync delay -> store -> connected browsers. Both modes share everything after the source.
  */
 export class Hub {
   private clients = new Set<Send>();
   private store = new LiveStore();
   private delay = new DelayBuffer<TelemetryEvent>(0);
-  private loaded: LoadedSession | null = null;
+  private meta: Meta | null = null;
   private player: ReplayPlayer | null = null;
-  private status: { status: 'idle' | 'loading' | 'ready' | 'error'; message?: string } = { status: 'idle' };
+  private live: { source: { start(): Promise<void>; stop(): void } } | null = null;
+  private liveStatus: LiveStatus;
+  private status: { status: Status; message?: string } = { status: 'idle' };
   private timer: NodeJS.Timeout | null = null;
   private lastClock = 0;
   private loadToken = 0;
 
-  constructor(private readonly client: OpenF1Client) {}
+  constructor(
+    private readonly client: OpenF1Client,
+    private readonly opts: HubOptions = {},
+  ) {
+    this.liveStatus = { configured: Boolean(opts.tokens?.configured), feed: 'off' };
+  }
 
   start(): void {
     this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -33,12 +69,14 @@ export class Hub {
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    this.stopLive();
   }
 
   connect(send: Send): () => void {
     this.clients.add(send);
     send({ type: 'status', ...this.status });
-    if (this.loaded) {
+    send({ type: 'live', live: this.liveStatus });
+    if (this.meta) {
       send(this.metaMessage());
       send({ type: 'snapshot', state: this.store.snapshot() });
       send({ type: 'clock', clock: this.clock() });
@@ -50,6 +88,9 @@ export class Hub {
     switch (msg.type) {
       case 'load':
         await this.load(msg.session_key);
+        break;
+      case 'live':
+        await this.goLive();
         break;
       case 'play':
         this.player?.play();
@@ -67,24 +108,110 @@ export class Hub {
         this.delay.setDelay(msg.delayMs);
         break;
     }
-    this.broadcast({ type: 'clock', clock: this.clock() });
+    if (this.meta) this.broadcast({ type: 'clock', clock: this.clock() });
   }
 
+  /** Replay a past session. */
   async load(sessionKey: number): Promise<void> {
     const token = ++this.loadToken;
+    this.stopLive();
     this.setStatus('loading', 'Loading session');
     try {
       const loaded = await loadSession(this.client, sessionKey, (m) => this.setStatus('loading', m));
       if (token !== this.loadToken) return; // a newer load started meanwhile
-      this.loaded = loaded;
+      this.meta = loaded;
       this.player = new ReplayPlayer(loaded.events, loaded.start, loaded.end);
       this.broadcast(this.metaMessage());
       this.seek(loaded.start);
       this.setStatus('ready', `${loaded.events.length.toLocaleString()} events`);
     } catch (err) {
       if (token !== this.loadToken) return;
-      this.setStatus('error', err instanceof Error ? err.message : String(err));
+      this.setStatus('error', errorText(err));
     }
+  }
+
+  /**
+   * Follow the current session live: load what has happened so far over REST, then stream
+   * new data over MQTT. Needs an OpenF1 sponsor login.
+   */
+  async goLive(): Promise<void> {
+    const token = ++this.loadToken;
+    this.stopLive();
+    this.player = null;
+    if (!this.liveStatus.configured) {
+      this.setStatus('error', 'Live data needs an OpenF1 sponsor login in the .env file (see README).');
+      return;
+    }
+    this.setStatus('loading', 'Finding the current session');
+    try {
+      const snap = await loadLiveSnapshot(this.client, (m) => this.setStatus('loading', m));
+      if (token !== this.loadToken) return;
+      this.setStatus('loading', 'Loading the track map');
+      const track = await outlineForCircuit(this.client, snap.session).catch(() => null);
+      if (token !== this.loadToken) return;
+
+      this.meta = { session: snap.session, drivers: snap.drivers, track, totalLaps: null };
+      this.delay.clear();
+      this.store.reset();
+      for (const e of snap.events) this.store.apply(e);
+      this.broadcast(this.metaMessage());
+      this.broadcast({ type: 'snapshot', state: this.store.snapshot() });
+
+      const source = this.createLiveSource();
+      this.live = { source };
+      this.setLive({ feed: 'connecting' });
+      await source.start();
+      if (token !== this.loadToken) {
+        source.stop();
+        return;
+      }
+      this.setStatus('ready', 'Live');
+    } catch (err) {
+      if (token !== this.loadToken) return;
+      this.stopLive();
+      this.setStatus('error', errorText(err));
+    }
+  }
+
+  private createLiveSource() {
+    const onMessage = (m: LiveMessage) => this.onLiveMessage(m);
+    const onStatus = (feed: LiveStatus['feed'], detail?: string) => this.setLive({ feed, detail });
+    if (this.opts.createLiveSource) return this.opts.createLiveSource(onMessage, onStatus);
+    return new LiveSource({
+      url: this.opts.mqttUrl,
+      username: this.opts.mqttUsername ?? '',
+      tokens: this.opts.tokens!,
+      onMessage,
+      onStatus: (s, d) => onStatus(s === 'closed' ? 'off' : s, d),
+    });
+  }
+
+  private onLiveMessage(m: LiveMessage): void {
+    this.liveStatus.lastMessageAt = Date.now();
+    if (m.kind === 'event') {
+      this.delay.push(m.event);
+      return;
+    }
+    if (!this.meta) return;
+    if (m.kind === 'session') {
+      // A new session started (e.g. qualifying after practice): reload everything for it.
+      if (Number(m.data.session_key) !== this.meta.session.session_key) void this.goLive();
+      return;
+    }
+    if (m.kind === 'driver') {
+      const d = m.data as unknown as DriverInfo;
+      if (!this.meta.drivers.some((x) => x.driver_number === d.driver_number)) {
+        this.meta.drivers = [...this.meta.drivers, d];
+        this.broadcast(this.metaMessage());
+      }
+    }
+  }
+
+  private stopLive(): void {
+    if (!this.live) return;
+    this.live.source.stop();
+    this.live = null;
+    this.setLive({ feed: 'off', detail: undefined });
   }
 
   private seek(t: number): void {
@@ -104,27 +231,45 @@ export class Hub {
       this.broadcast({ type: 'events', events: ready.map(slim) });
     }
     const now = Date.now();
-    if (this.player && now - this.lastClock >= CLOCK_EVERY_MS) {
+    if (this.meta && now - this.lastClock >= CLOCK_EVERY_MS) {
       this.lastClock = now;
       this.broadcast({ type: 'clock', clock: this.clock() });
     }
   }
 
-  private clock() {
+  private clock(): ClockState {
+    const delayMs = this.delay.getDelay();
+    if (this.live && this.meta) {
+      // Live data is stamped with real time; what the page shows is `delay` behind now.
+      return {
+        mode: 'live',
+        t: Date.now() - delayMs,
+        start: Date.parse(this.meta.session.date_start),
+        end: Date.parse(this.meta.session.date_end) + 3600_000,
+        speed: 1,
+        playing: true,
+        delayMs,
+      };
+    }
     const p = this.player?.state ?? { t: 0, start: 0, end: 0, speed: 1, playing: false };
     // The page shows what has come out of the delay buffer, so shift the clock back by the delay.
-    const shown = Math.max(p.start, p.t - (p.playing ? this.delay.getDelay() * p.speed : 0));
-    return { ...p, t: shown, delayMs: this.delay.getDelay() };
+    const shown = Math.max(p.start, p.t - (p.playing ? delayMs * p.speed : 0));
+    return { mode: 'replay', ...p, t: shown, delayMs };
   }
 
   private metaMessage(): ServerMessage {
-    const l = this.loaded;
-    return { type: 'meta', session: l?.session ?? null, drivers: l?.drivers ?? [], track: l?.track ?? null, totalLaps: l?.totalLaps ?? null };
+    const m = this.meta;
+    return { type: 'meta', session: m?.session ?? null, drivers: m?.drivers ?? [], track: m?.track ?? null, totalLaps: m?.totalLaps ?? null };
   }
 
-  private setStatus(status: 'idle' | 'loading' | 'ready' | 'error', message?: string): void {
+  private setStatus(status: Status, message?: string): void {
     this.status = { status, message };
     this.broadcast({ type: 'status', status, message });
+  }
+
+  private setLive(patch: Partial<LiveStatus>): void {
+    this.liveStatus = { ...this.liveStatus, ...patch };
+    this.broadcast({ type: 'live', live: this.liveStatus });
   }
 
   private broadcast(msg: ServerMessage): void {
@@ -137,4 +282,8 @@ function slim(e: TelemetryEvent): TelemetryEvent {
   if (e.topic !== 'location') return e;
   const { driver_number, x, y, date } = e.data;
   return { topic: e.topic, t: e.t, data: { driver_number, x, y, date } };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

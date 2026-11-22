@@ -24,6 +24,7 @@ export function startHttpServer(opts: { port: number; hub: Hub; client: OpenF1Cl
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
       if (url.pathname === '/api/sessions') return await sessions(url, res, client);
+      if (url.pathname === '/api/live') return await liveInfo(res, client);
       return await serveStatic(url.pathname, webDist, res);
     } catch (err) {
       res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err));
@@ -53,8 +54,23 @@ async function sessions(url: URL, res: ServerResponse, client: OpenF1Client) {
   const year = Number(url.searchParams.get('year')) || new Date().getUTCFullYear();
   // Past seasons never change, so cache them; the current season gains sessions.
   const cache = year < new Date().getUTCFullYear();
-  const list = await client.get<unknown[]>('sessions', { year }, { cache });
+  const list = await client.get<unknown[]>('sessions', { year }, { cache, auth: !cache && client.hasAuth });
   res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(list));
+}
+
+/** The latest session and whether it is inside OpenF1's live window right now. */
+async function liveInfo(res: ServerResponse, client: OpenF1Client) {
+  let session: { date_start: string; date_end: string } | null = null;
+  let error: string | undefined;
+  try {
+    [session = null] = await client.get<{ date_start: string; date_end: string }[]>('sessions', { session_key: 'latest' }, { cache: false, auth: client.hasAuth });
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+  }
+  const now = Date.now();
+  const window = 30 * 60_000;
+  const isLive = Boolean(session && now >= Date.parse(session.date_start) - window && now <= Date.parse(session.date_end) + window);
+  res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ configured: client.hasAuth, session, isLive, error }));
 }
 
 async function serveStatic(pathname: string, root: string, res: ServerResponse) {

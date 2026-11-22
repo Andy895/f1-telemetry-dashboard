@@ -4,13 +4,17 @@
   "version": "0.1.0",
   "description": "Second-monitor F1 race dashboard powered by OpenF1 data",
   "type": "module",
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev": "concurrently -n server,web -c blue,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
     "build": "npm run build -w web",
     "start": "npm run build && npm run start -w server",
     "test": "npm run test -w server",
-    "typecheck": "npm run typecheck -w server && npm run typecheck -w web"
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "simulate": "npm run build && concurrently -k -n openf1-sim,server -c yellow,blue \"npm run simulate -w server\" \"npm run start:sim -w server\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

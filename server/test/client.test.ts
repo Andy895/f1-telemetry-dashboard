@@ -27,3 +27,19 @@ describe('OpenF1Client', () => {
     expect(calls[0]).toBe('https://api.openf1.org/v1/sessions?session_key=1');
   });
 });
+
+describe('OpenF1Client with a sponsor login', () => {
+  it('sends the bearer token on every request by default', async () => {
+    const { TokenManager } = await import('../src/openf1/auth.js');
+    const seen: (string | undefined)[] = [];
+    const fakeFetch = (async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/token')) return Response.json({ access_token: 'abc', expires_in: '3600' });
+      seen.push((init?.headers as Record<string, string>).authorization);
+      return Response.json([]);
+    }) as unknown as typeof fetch;
+    const tokens = new TokenManager('u', 'p', { fetchImpl: fakeFetch, url: 'https://x/token' });
+    const client = new OpenF1Client(tmpdir(), 0, fakeFetch, tokens);
+    await client.get('laps', { session_key: 1 }, { cache: false });
+    expect(seen).toEqual(['Bearer abc']);
+  });
+});

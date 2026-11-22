@@ -75,3 +75,37 @@ function lapStartIndex(laps: OpenF1Record[]): Map<number, Map<number, number>> {
   }
   return index;
 }
+
+export interface LiveSnapshot {
+  session: SessionInfo;
+  drivers: DriverInfo[];
+  /** Everything so far in the current session, time-ordered, for seeding the store. */
+  events: TelemetryEvent[];
+}
+
+/**
+ * What has happened so far in the session that is on now. Uses the sponsor login, because
+ * OpenF1's REST API also requires it during the live window. Nothing is cached.
+ */
+export async function loadLiveSnapshot(client: OpenF1Client, onProgress: (msg: string) => void = () => {}): Promise<LiveSnapshot> {
+  const live = { cache: false, auth: true };
+  const [session] = await client.get<SessionInfo[]>('sessions', { session_key: 'latest' }, live);
+  if (!session) throw new Error('OpenF1 has no current session');
+  const key = session.session_key;
+
+  onProgress('Loading drivers');
+  const drivers = dedupeDrivers(await client.get<DriverInfo[]>('drivers', { session_key: key }, live));
+
+  const byTopic: Partial<Record<Topic, OpenF1Record[]>> = {};
+  for (const topic of SESSION_TOPICS) {
+    onProgress(`Loading ${topic}`);
+    byTopic[topic] = await client.get<OpenF1Record[]>(topic, { session_key: key }, live);
+  }
+  // Only the last few seconds of car positions, enough to place every car on the map.
+  onProgress('Loading car positions');
+  const since = new Date(Date.now() - 15_000).toISOString();
+  byTopic.location = await client.get<OpenF1Record[]>('location', { session_key: key, 'date>': since }, live);
+
+  const events = buildTimeline(byTopic, lapStartIndex(byTopic.laps ?? []));
+  return { session, drivers, events };
+}
