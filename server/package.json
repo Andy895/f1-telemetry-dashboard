@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "simulate": "tsx src/tools/simulate-live.ts",
-    "start:sim": "tsx src/index.ts --simulate"
+    "start:sim": "tsx src/index.ts --simulate",
+    "check-live": "tsx src/tools/check-live.ts"
   },
   "dependencies": {
     "mqtt": "^5.16.1",

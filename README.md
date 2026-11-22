@@ -17,7 +17,7 @@ A second-monitor dashboard of live Formula 1 race data from [OpenF1](https://ope
 
 ## Watching live (Phase 1)
 
-Live data needs an [OpenF1 sponsor account](https://openf1.org) (EUR 9.90/month).
+Live data needs an [OpenF1 sponsor account](https://openf1.org) (EUR 9.90/month). **Step-by-step guide: [LIVE-SETUP.md](LIVE-SETUP.md)**, which includes `npm run check-live` to test your login on any day.
 
 1. In this folder, copy `.env.example` to a new file named `.env` (in File Explorer: copy, paste, rename).
 2. Open `.env` in Notepad and fill in the email and password of your OpenF1 sponsor account:
