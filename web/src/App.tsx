@@ -33,12 +33,10 @@ export function App() {
       <TimingTower />
       <div className="side">
         <TyreStrategy />
-        <div className="side-pair">
-          <Battles />
-          <PitStops />
-        </div>
+        <Battles />
+        <PitStops />
+        <RaceControl />
       </div>
-      <RaceControl />
     </div>
   );
 }

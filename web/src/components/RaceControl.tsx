@@ -3,7 +3,7 @@ import { useDashboard } from '../state';
 export function RaceControl() {
   const feed = useDashboard((s) => s.race_control);
   const drivers = useDashboard((s) => s.drivers);
-  const latest = [...feed].reverse().slice(0, 8);
+  const latest = [...feed].reverse().slice(0, 12);
 
   return (
     <section className="panel rc">
