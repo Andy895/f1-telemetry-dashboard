@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { addSample, resetCars, syncClock } from './motion';
 import type {
   ClientMessage,
   ClockState,
@@ -32,28 +33,13 @@ export const useDashboard = create<DashboardState>(() => ({
   position: {},
   intervals: {},
   laps: {},
+  best_laps: {},
   stints: {},
+  stint_history: {},
   pit: [],
   race_control: [],
   weather: null,
 }));
-
-/**
- * Car positions change ~4 times a second per car, so they live outside React state.
- * The track map reads them every animation frame and interpolates between samples.
- */
-export interface CarMotion {
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
-  /** performance.now() when the latest sample arrived */
-  at: number;
-  /** how long to glide from `from` to `to`, in ms */
-  dur: number;
-  lastT: number;
-}
-export const carMotion = new Map<string, CarMotion>();
 
 let socket: WebSocket | null = null;
 
@@ -78,7 +64,7 @@ function handle(msg: ServerMessage) {
       useDashboard.setState({ status: { status: msg.status, message: msg.message } });
       break;
     case 'meta':
-      carMotion.clear();
+      resetCars();
       useDashboard.setState({
         session: msg.session,
         track: msg.track,
@@ -88,8 +74,8 @@ function handle(msg: ServerMessage) {
       break;
     case 'snapshot': {
       const { location, ...rest } = msg.state;
-      carMotion.clear();
-      for (const [driver, rec] of Object.entries(location)) setCar(driver, rec, true);
+      resetCars();
+      for (const [driver, rec] of Object.entries(location)) addSample(driver, Date.parse(String(rec.date)), Number(rec.x), Number(rec.y));
       useDashboard.setState(rest);
       break;
     }
@@ -97,6 +83,7 @@ function handle(msg: ServerMessage) {
       applyEvents(msg.events);
       break;
     case 'clock':
+      syncClock(msg.clock);
       useDashboard.setState({ clock: { ...msg.clock, receivedAt: performance.now() } });
       break;
   }
@@ -109,7 +96,7 @@ function applyEvents(events: TelemetryEvent[]) {
     const driver = String(e.data.driver_number ?? '');
     switch (e.topic) {
       case 'location':
-        setCar(driver, e.data, false);
+        addSample(driver, e.t, Number(e.data.x), Number(e.data.y));
         break;
       case 'position':
       case 'intervals':
@@ -117,6 +104,15 @@ function applyEvents(events: TelemetryEvent[]) {
       case 'stints': {
         const map = (next[e.topic] ??= { ...s[e.topic] }) as Record<string, OpenF1Record>;
         map[driver] = e.data;
+        if (e.topic === 'stints') {
+          const hist = (next.stint_history ??= { ...s.stint_history });
+          const list = [...(hist[driver] ?? [])];
+          const i = list.findIndex((h) => h.stint_number === e.data.stint_number);
+          if (i >= 0) list[i] = e.data;
+          else list.push(e.data);
+          hist[driver] = list;
+        }
+        if (e.topic === 'laps' && isFaster(e.data, (next.best_laps ??= { ...s.best_laps })[driver])) next.best_laps![driver] = e.data;
         break;
       }
       case 'pit':
@@ -134,28 +130,8 @@ function applyEvents(events: TelemetryEvent[]) {
   if (Object.keys(next).length > 0) useDashboard.setState(next);
 }
 
-function setCar(driver: string, rec: OpenF1Record, jump: boolean) {
-  const x = Number(rec.x);
-  const y = Number(rec.y);
-  const t = Date.parse(String(rec.date));
-  const now = performance.now();
-  const prev = carMotion.get(driver);
-  const speed = useDashboard.getState().clock?.speed ?? 1;
-  if (!prev || jump) {
-    carMotion.set(driver, { fromX: x, fromY: y, toX: x, toY: y, at: now, dur: 1, lastT: t });
-    return;
-  }
-  // Start from where the dot is drawn right now, so motion never snaps.
-  const k = Math.min(1, (now - prev.at) / prev.dur);
-  const curX = prev.fromX + (prev.toX - prev.fromX) * k;
-  const curY = prev.fromY + (prev.toY - prev.fromY) * k;
-  const gap = Number.isFinite(t - prev.lastT) ? (t - prev.lastT) / speed : 270;
-  carMotion.set(driver, { fromX: curX, fromY: curY, toX: x, toY: y, at: now, dur: Math.min(Math.max(gap, 30), 2000), lastT: t });
-}
-
-/** Session time now, extrapolated between clock messages. */
-export function sessionNow(clock: DashboardState['clock']): number {
-  if (!clock) return 0;
-  if (!clock.playing) return clock.t;
-  return Math.min(clock.end, clock.t + (performance.now() - clock.receivedAt) * clock.speed);
+function isFaster(lap: OpenF1Record, best: OpenF1Record | undefined): boolean {
+  const d = lap.lap_duration;
+  if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return false;
+  return !best || d < Number(best.lap_duration);
 }

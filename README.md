@@ -7,8 +7,10 @@ A second-monitor dashboard of live Formula 1 race data from [OpenF1](https://ope
 ## What it does today (Phase 0)
 
 - Pick any past session from 2023 onward and replay it at 1x, 2x, 5x or 10x, with a seek bar.
-- Timing tower: position, gap to leader, interval, last lap, tyre compound and age.
-- Track map: circuit outline traced from car positions, with every car moving smoothly.
+- Laid out for a portrait 1080x1920 monitor.
+- Timing tower: position, gap to leader, interval (green inside 1 s), last and best lap (purple for fastest), tyre compound and age, pit stops.
+- Tyre strategy chart, battles within 1 s, and a pit stop log.
+- Track map: circuit outline traced from car positions and turned to stand tall, with cars drawn from a short buffer so they glide smoothly at every replay speed.
 - Header with lap counter, track status (green, yellow, safety car, red, chequered) and weather.
 - Race control feed: flags, penalties, incidents, newest first.
 - Sync delay: hold the dashboard back N seconds to match your TV stream.
@@ -25,7 +27,7 @@ Live data (Phase 1) will use the same pipeline once an OpenF1 sponsor account is
    npm start
    ```
 
-3. Open <http://localhost:8787> in a browser on the second monitor and press F11 for full screen.
+3. Open <http://localhost:8787> in a browser on the second (portrait, 1080x1920) monitor and press F11 for full screen.
 4. Pick a race. The first load of a race downloads it from OpenF1 (about a minute, because the free API allows 30 requests a minute). After that it is cached in `data/cache` and loads instantly.
 
 To jump straight into a race: `npm start -- --session 9839` (2025 Abu Dhabi GP).

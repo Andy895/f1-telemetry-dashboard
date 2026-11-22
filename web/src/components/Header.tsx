@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { formatClock, trackStatus } from '../format';
-import { send, sessionNow, useDashboard } from '../state';
+import { clockNow } from '../motion';
+import { send, useDashboard } from '../state';
 
 const SPEEDS = [1, 2, 5, 10];
 
@@ -20,6 +21,7 @@ export function Header() {
 
   return (
     <header className="header">
+      <div className="header-row">
       <div className="title">
         <span className="gp">{session.country_name}</span>
         <span className="muted">{session.session_name} · {session.year}</span>
@@ -35,7 +37,7 @@ export function Header() {
           Air {String(weather.air_temperature)}° · Track {String(weather.track_temperature)}°{weather.rainfall ? ' · Rain' : ''}
         </div>
       )}
-      <div className="spacer" />
+      </div>
       {clock && (
         <div className="controls">
           <button onClick={() => send({ type: clock.playing ? 'pause' : 'play' })}>{clock.playing ? 'Pause' : 'Play'}</button>
@@ -76,10 +78,10 @@ export function Header() {
 
 /** Re-render a few times a second so the clock and slider move smoothly. */
 function useTicker(clock: ReturnType<typeof useDashboard.getState>['clock']) {
-  const [t, setT] = useState(() => sessionNow(clock));
+  const [t, setT] = useState(() => clockNow());
   useEffect(() => {
-    setT(sessionNow(clock));
-    const id = setInterval(() => setT(sessionNow(clock)), 250);
+    setT(clockNow());
+    const id = setInterval(() => setT(clockNow()), 250);
     return () => clearInterval(id);
   }, [clock]);
   return t;

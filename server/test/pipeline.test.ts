@@ -34,4 +34,25 @@ describe('LiveStore', () => {
     expect(snap.race_control).toHaveLength(50);
     expect(snap.race_control.at(-1)?.message).toBe('m59');
   });
+
+  it('tracks each driver\'s best lap', () => {
+    const store = new LiveStore();
+    store.apply({ topic: 'laps', t: 1, data: { driver_number: 4, lap_number: 1, lap_duration: 95.1 } });
+    store.apply({ topic: 'laps', t: 2, data: { driver_number: 4, lap_number: 2, lap_duration: 91.2 } });
+    store.apply({ topic: 'laps', t: 3, data: { driver_number: 4, lap_number: 3, lap_duration: null } });
+    store.apply({ topic: 'laps', t: 4, data: { driver_number: 4, lap_number: 4, lap_duration: 92.0 } });
+    const snap = store.snapshot();
+    expect(snap.best_laps['4']?.lap_number).toBe(2);
+    expect(snap.laps['4']?.lap_number).toBe(4);
+  });
+
+  it('keeps stint history per driver, replacing updated stints', () => {
+    const store = new LiveStore();
+    store.apply({ topic: 'stints', t: 1, data: { driver_number: 4, stint_number: 1, compound: 'MEDIUM', lap_end: 10 } });
+    store.apply({ topic: 'stints', t: 2, data: { driver_number: 4, stint_number: 1, compound: 'MEDIUM', lap_end: 18 } });
+    store.apply({ topic: 'stints', t: 3, data: { driver_number: 4, stint_number: 2, compound: 'HARD' } });
+    const snap = store.snapshot();
+    expect(snap.stint_history['4']?.map((s) => s.lap_end ?? s.compound)).toEqual([18, 'HARD']);
+    expect(snap.stints['4']?.stint_number).toBe(2);
+  });
 });

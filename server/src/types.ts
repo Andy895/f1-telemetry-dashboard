@@ -81,7 +81,11 @@ export interface StoreSnapshot {
   position: Record<string, OpenF1Record>;
   intervals: Record<string, OpenF1Record>;
   laps: Record<string, OpenF1Record>;
+  /** Each driver's fastest completed lap so far. */
+  best_laps: Record<string, OpenF1Record>;
   stints: Record<string, OpenF1Record>;
+  /** Every stint so far per driver, oldest first (for the tyre strategy chart). */
+  stint_history: Record<string, OpenF1Record[]>;
   pit: OpenF1Record[];
   race_control: OpenF1Record[];
   weather: OpenF1Record | null;
