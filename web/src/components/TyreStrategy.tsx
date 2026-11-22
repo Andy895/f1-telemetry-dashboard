@@ -7,7 +7,10 @@ export function TyreStrategy() {
   const position = useDashboard((s) => s.position);
   const laps = useDashboard((s) => s.laps);
   const history = useDashboard((s) => s.stint_history);
-  const totalLaps = useDashboard((s) => s.totalLaps) ?? 1;
+  const knownTotal = useDashboard((s) => s.totalLaps);
+  // Live, the race distance isn't in the data yet, so scale to the laps run so far.
+  const lapsSoFar = Math.max(1, ...Object.values(laps).map((l) => Number(l.lap_number) || 0));
+  const totalLaps = knownTotal ?? lapsSoFar;
 
   const rows = Object.values(position)
     .filter((p) => drivers[String(p.driver_number)])

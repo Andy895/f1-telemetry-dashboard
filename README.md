@@ -15,7 +15,25 @@ A second-monitor dashboard of live Formula 1 race data from [OpenF1](https://ope
 - Race control feed: flags, penalties, incidents, newest first.
 - Sync delay: hold the dashboard back N seconds to match your TV stream.
 
-Live data (Phase 1) will use the same pipeline once an OpenF1 sponsor account is set up.
+## Watching live (Phase 1)
+
+Live data needs an [OpenF1 sponsor account](https://openf1.org) (EUR 9.90/month).
+
+1. In this folder, copy `.env.example` to a new file named `.env` (in File Explorer: copy, paste, rename).
+2. Open `.env` in Notepad and fill in the email and password of your OpenF1 sponsor account:
+
+   ```
+   OPENF1_USERNAME=you@example.com
+   OPENF1_PASSWORD=your-openf1-password
+   ```
+
+3. Run `npm start`, open <http://localhost:8787>, and click **Go live** at the top of the session list. OpenF1's live window opens 30 minutes before each session.
+
+The **F1 TV** button sets a 30 second delay as a starting point. Use **−1 / +1** until flags and overtakes appear on the dashboard at the same moment as on your TV. The setting is remembered.
+
+### Try live mode without a race
+
+`npm run simulate` starts a local stand-in for OpenF1 that replays the 2025 Abu Dhabi GP as if it were live now, and starts the dashboard connected to it. Open <http://localhost:8787>. No OpenF1 account is needed.
 
 ## Run it on Windows
 
@@ -45,12 +63,13 @@ Behind a corporate proxy, set `HTTPS_PROXY` and run with `NODE_USE_ENV_PROXY=1` 
 ## How it works
 
 ```
-OpenF1 REST (history) ──► server: replay player ──► sync delay ──► live store ──► WebSocket ──► React dashboard
-OpenF1 MQTT (live, Phase 1) ─┘
+OpenF1 REST (history) ──► replay player ─┐
+OpenF1 MQTT (live) ──────► live source ───┴─► sync delay ──► live store ──► WebSocket ──► React dashboard
 ```
 
 - `server/src/openf1/client.ts` rate-limited REST client with a disk cache.
 - `server/src/replay/` loads a session, merges every topic into one timeline, and plays it against the clock.
+- `server/src/openf1/auth.ts` exchanges the sponsor login for a 1-hour token and renews it; `server/src/live/` is the MQTT feed.
 - `server/src/pipeline/` sync-delay buffer and the latest-state store (new browser tabs get a snapshot).
 - `server/src/net/` WebSocket hub and HTTP server (serves the built web app).
 - `web/src/` React + Zustand dashboard; car dots are interpolated at 60 fps between 3.7 Hz samples.

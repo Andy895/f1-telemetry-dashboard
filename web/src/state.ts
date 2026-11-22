@@ -4,6 +4,7 @@ import type {
   ClientMessage,
   ClockState,
   DriverInfo,
+  LiveStatus,
   OpenF1Record,
   ServerMessage,
   SessionInfo,
@@ -20,6 +21,7 @@ export interface DashboardState extends Omit<StoreSnapshot, 'location'> {
   track: TrackOutline | null;
   totalLaps: number | null;
   clock: (ClockState & { receivedAt: number }) | null;
+  live: LiveStatus;
 }
 
 export const useDashboard = create<DashboardState>(() => ({
@@ -30,6 +32,7 @@ export const useDashboard = create<DashboardState>(() => ({
   track: null,
   totalLaps: null,
   clock: null,
+  live: { configured: false, feed: 'off' },
   position: {},
   intervals: {},
   laps: {},
@@ -50,7 +53,11 @@ export function send(msg: ClientMessage) {
 export function connect() {
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
   socket = new WebSocket(url);
-  socket.onopen = () => useDashboard.setState({ connected: true });
+  socket.onopen = () => {
+    useDashboard.setState({ connected: true });
+    // The sync delay is a per-viewer preference; restore it on every (re)connect.
+    send({ type: 'delay', delayMs: loadDelay() });
+  };
   socket.onclose = () => {
     useDashboard.setState({ connected: false });
     setTimeout(connect, 1500);
@@ -81,6 +88,9 @@ function handle(msg: ServerMessage) {
     }
     case 'events':
       applyEvents(msg.events);
+      break;
+    case 'live':
+      useDashboard.setState({ live: msg.live });
       break;
     case 'clock':
       syncClock(msg.clock);
@@ -134,4 +144,24 @@ function isFaster(lap: OpenF1Record, best: OpenF1Record | undefined): boolean {
   const d = lap.lap_duration;
   if (typeof d !== 'number' || !Number.isFinite(d) || d <= 0) return false;
   return !best || d < Number(best.lap_duration);
+}
+
+const DELAY_KEY = 'f1dash.delayMs';
+
+export function loadDelay(): number {
+  try {
+    return Number(localStorage.getItem(DELAY_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function setDelay(ms: number) {
+  const v = Math.max(0, Math.min(180_000, Math.round(ms)));
+  try {
+    localStorage.setItem(DELAY_KEY, String(v));
+  } catch {
+    /* private mode: keep it for this session only */
+  }
+  send({ type: 'delay', delayMs: v });
 }

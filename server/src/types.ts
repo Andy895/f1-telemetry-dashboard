@@ -32,6 +32,7 @@ export interface TelemetryEvent {
 
 export interface SessionInfo {
   session_key: number;
+  circuit_key?: number;
   meeting_key: number;
   session_name: string;
   session_type: string;
@@ -64,9 +65,21 @@ export type ServerMessage =
   | { type: 'snapshot'; state: StoreSnapshot }
   | { type: 'events'; events: TelemetryEvent[] }
   | { type: 'clock'; clock: ClockState }
-  | { type: 'status'; status: 'idle' | 'loading' | 'ready' | 'error'; message?: string };
+  | { type: 'status'; status: 'idle' | 'loading' | 'ready' | 'error'; message?: string }
+  | { type: 'live'; live: LiveStatus };
+
+export interface LiveStatus {
+  /** Sponsor login present in .env */
+  configured: boolean;
+  /** Connection state of the live feed while in live mode */
+  feed: 'off' | 'connecting' | 'connected' | 'reconnecting' | 'error';
+  detail?: string;
+  /** Wall-clock ms of the last live message received */
+  lastMessageAt?: number;
+}
 
 export interface ClockState {
+  mode: 'replay' | 'live';
   /** Session time currently shown, ms since epoch. */
   t: number;
   start: number;
@@ -94,6 +107,7 @@ export interface StoreSnapshot {
 /** Messages the browser sends to the server. */
 export type ClientMessage =
   | { type: 'load'; session_key: number }
+  | { type: 'live' }
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'speed'; speed: number }

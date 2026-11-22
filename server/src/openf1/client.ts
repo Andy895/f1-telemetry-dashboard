@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { TokenManager } from './auth.js';
 
-const BASE_URL = 'https://api.openf1.org/v1';
+const DEFAULT_BASE_URL = 'https://api.openf1.org/v1';
 
 /**
  * Minimal OpenF1 REST client.
@@ -17,10 +18,23 @@ export class OpenF1Client {
     /** Minimum gap between requests. 2100 ms keeps us under 30 req/min. */
     private readonly minGapMs = 2100,
     private readonly fetchImpl: typeof fetch = fetch,
+    /** Sponsor login. Needed for REST calls during a live session. */
+    private readonly tokens: TokenManager | null = null,
+    private readonly baseUrl = DEFAULT_BASE_URL,
   ) {}
 
-  async get<T = unknown>(endpoint: string, params: Record<string, string | number>, opts: { cache?: boolean } = {}): Promise<T> {
+  get hasAuth(): boolean {
+    return Boolean(this.tokens?.configured);
+  }
+
+  /**
+   * GET an endpoint. Each key is followed by '=', so comparison filters go in the key:
+   * { 'date>': v } sends `date>=v` and { 'date<': v } sends `date<=v`.
+   */
+  async get<T = unknown>(endpoint: string, params: Record<string, string | number>, opts: { cache?: boolean; auth?: boolean } = {}): Promise<T> {
     const useCache = opts.cache ?? true;
+    // With a sponsor login, always send the token: OpenF1 may require it for any REST call during a live session.
+    const useAuth = opts.auth ?? this.hasAuth;
     const query = Object.entries(params)
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
       .join('&');
@@ -31,7 +45,7 @@ export class OpenF1Client {
       if (cached !== undefined) return cached;
     }
 
-    const body = await this.fetchWithRetry<T>(`${BASE_URL}/${endpoint}?${query}`);
+    const body = await this.fetchWithRetry<T>(`${this.baseUrl}/${endpoint}?${query}`, 0, useAuth);
     if (useCache) {
       await mkdir(dirname(cachePath), { recursive: true });
       await writeFile(cachePath, JSON.stringify(body));
@@ -39,11 +53,13 @@ export class OpenF1Client {
     return body;
   }
 
-  private async fetchWithRetry<T>(url: string, attempt = 0): Promise<T> {
+  private async fetchWithRetry<T>(url: string, attempt = 0, useAuth = false): Promise<T> {
     await this.waitForSlot();
+    const headers: Record<string, string> = { accept: 'application/json' };
+    if (useAuth && this.tokens?.configured) headers.authorization = `Bearer ${await this.tokens.get()}`;
     let res: Response;
     try {
-      res = await this.fetchImpl(url, { headers: { accept: 'application/json' } });
+      res = await this.fetchImpl(url, { headers });
     } catch (err) {
       const cause = err instanceof Error && err.cause instanceof Error ? `: ${err.cause.message}` : '';
       throw new Error(`Could not reach OpenF1 (${url})${cause}`);
@@ -51,7 +67,11 @@ export class OpenF1Client {
     if (res.status === 429 && attempt < 4) {
       const retryAfter = Number(res.headers.get('retry-after')) || 10;
       await sleep(retryAfter * 1000);
-      return this.fetchWithRetry<T>(url, attempt + 1);
+      return this.fetchWithRetry<T>(url, attempt + 1, useAuth);
+    }
+    if (res.status === 401 && useAuth && attempt < 1) {
+      this.tokens?.invalidate();
+      return this.fetchWithRetry<T>(url, attempt + 1, useAuth);
     }
     // OpenF1 answers 404 with {"detail": "No results found."} when a filter matches nothing.
     if (res.status === 404) return [] as T;
