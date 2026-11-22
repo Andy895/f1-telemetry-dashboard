@@ -29,6 +29,8 @@ export class OddsService {
     private readonly cacheDir: string | null,
     fetchImpl: typeof fetch = fetch,
     private readonly finders: ((m: MeetingInfo, d: DriverInfo[]) => Promise<OddsMarket | null>)[] | null = null,
+    /** Where to find Kalshi (the simulator serves a stand-in), and whether to try Polymarket. */
+    private readonly sources: { kalshiBase?: string; polymarket?: boolean } = {},
   ) {
     this.http = new JsonFetcher(fetchImpl);
   }
@@ -42,7 +44,10 @@ export class OddsService {
     }
 
     const meeting = await this.meetingInfo(session);
-    const finders = this.finders ?? [(m: MeetingInfo, d: DriverInfo[]) => findKalshiMarket(this.http, m, d), (m: MeetingInfo, d: DriverInfo[]) => findPolymarketMarket(this.http, m, d)];
+    const finders = this.finders ?? [
+      (m: MeetingInfo, d: DriverInfo[]) => findKalshiMarket(this.http, m, d, this.sources.kalshiBase),
+      ...(this.sources.polymarket === false ? [] : [(m: MeetingInfo, d: DriverInfo[]) => findPolymarketMarket(this.http, m, d)]),
+    ];
     let market: OddsMarket | null = null;
     const errors: string[] = [];
     for (const find of finders) {
@@ -85,7 +90,7 @@ export class OddsService {
     return out;
   }
 
-  private async meetingInfo(session: SessionInfo): Promise<MeetingInfo> {
+  async meetingInfo(session: SessionInfo): Promise<MeetingInfo> {
     let name = `${session.location} Grand Prix`;
     let raceStart: number | null = session.session_name === 'Race' ? Date.parse(session.date_start) : null;
     try {

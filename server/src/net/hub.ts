@@ -77,6 +77,11 @@ export class Hub {
     this.liveStatus = { configured: Boolean(opts.tokens?.configured), feed: 'off' };
   }
 
+  /** True once a live session is loaded and streaming. */
+  get isLive(): boolean {
+    return this.live !== null && this.status.status === 'ready';
+  }
+
   start(): void {
     this.timer = setInterval(() => this.tick(), TICK_MS);
   }

@@ -43,7 +43,7 @@ The **Race winner chance** panel shows each driver's chance of winning as priced
 - Works in replays (price history for that session) and live (prices refreshed every 15 seconds and held back by the same sync delay as everything else, so they move with your TV picture).
 - Read-only public market data: no account needed, nothing can place a bet. Prices are what traders are paying, not a prediction from this app.
 - Kalshi usually opens a race's market a few days before the race. Before then the panel says no market was found.
-- Odds are off in `npm run simulate` (old race, today's prices would not match). Set `ODDS=off` in `.env` to turn them off.
+- `npm run simulate` plays the 2025 Abu Dhabi race's real Kalshi prices along with the race, so you can see the panel move as it would live. Set `ODDS=off` in `.env` to turn odds off.
 
 ### Try live mode without a race
 
