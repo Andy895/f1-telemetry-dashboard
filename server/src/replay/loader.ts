@@ -20,32 +20,46 @@ const SESSION_TOPICS: Topic[] = ['position', 'intervals', 'laps', 'stints', 'pit
  * Download (or read from cache) everything needed to replay one session.
  * Location is fetched per driver because the full-session payload is large.
  */
+const TOPIC_LABEL: Partial<Record<Topic, string>> = {
+  position: 'positions',
+  intervals: 'intervals',
+  laps: 'lap times',
+  stints: 'tyre stints',
+  pit: 'pit stops',
+  race_control: 'race control messages',
+  weather: 'weather',
+};
+
 export async function loadSession(
   client: OpenF1Client,
   sessionKey: number,
-  onProgress: (msg: string) => void = () => {},
+  /** Called before each download with a label and how far along the load is (0..1). */
+  onProgress: (msg: string, fraction?: number) => void = () => {},
 ): Promise<LoadedSession> {
   const [session] = await client.get<SessionInfo[]>('sessions', { session_key: sessionKey });
   if (!session) throw new Error(`Session ${sessionKey} not found`);
 
-  onProgress('Loading drivers');
+  onProgress('Loading drivers', 0);
   const drivers = dedupeDrivers(await client.get<DriverInfo[]>('drivers', { session_key: sessionKey }));
 
+  // Car positions are the big downloads, so they get most of the bar: one step per topic, three per driver.
+  const steps = 1 + SESSION_TOPICS.length + drivers.length * 3;
   const byTopic: Partial<Record<Topic, OpenF1Record[]>> = {};
-  for (const topic of SESSION_TOPICS) {
-    onProgress(`Loading ${topic}`);
+  for (const [i, topic] of SESSION_TOPICS.entries()) {
+    onProgress(`Loading ${TOPIC_LABEL[topic] ?? topic}`, (1 + i) / steps);
     byTopic[topic] = await client.get<OpenF1Record[]>(topic, { session_key: sessionKey });
   }
 
   const locationByDriver = new Map<number, OpenF1Record[]>();
   for (const [i, d] of drivers.entries()) {
-    onProgress(`Loading car positions ${i + 1}/${drivers.length} (${d.name_acronym})`);
+    onProgress(`Loading car positions ${i + 1}/${drivers.length} (${d.name_acronym})`, (1 + SESSION_TOPICS.length + i * 3) / steps);
     locationByDriver.set(
       d.driver_number,
       await client.get<OpenF1Record[]>('location', { session_key: sessionKey, driver_number: d.driver_number }),
     );
   }
   byTopic.location = [...locationByDriver.values()].flat();
+  onProgress('Building the replay', 0.97);
 
   const laps = byTopic.laps ?? [];
   const lapStarts = lapStartIndex(laps);

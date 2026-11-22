@@ -134,3 +134,32 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .drs-badge.armed { color: #f2c200; border-color: #f2c200; }
 .drs-badge.open { color: #000; background: #3ddc84; border-color: #3ddc84; }
 .trace { width: 100%; height: 36px; display: block; }
+
+/* Loading bar on the start screen */
+.loading { width: min(520px, 90vw); margin-top: 16px; }
+.loading-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+.loading-head strong { font-variant-numeric: tabular-nums; }
+.loading-track { height: 8px; background: #262b38; border-radius: 4px; overflow: hidden; }
+.loading-fill { height: 100%; background: #e10600; border-radius: 4px; transition: width 0.4s ease; }
+.loading-track.indeterminate .loading-fill { width: 30%; animation: loading-slide 1.2s ease-in-out infinite; }
+@keyframes loading-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+.loading .small { margin-top: 8px; }
+
+/* Race winner odds */
+.odds h2 { display: flex; justify-content: space-between; align-items: baseline; }
+.odds-source { font-size: 10px; letter-spacing: 0; text-transform: none; color: var(--muted); text-decoration: none; font-weight: 400; }
+.odds-source:hover { color: var(--text); }
+.odds-body { display: grid; grid-template-columns: 210px 1fr; gap: 10px; align-items: center; }
+.odds-list { list-style: none; margin: 0; padding: 0; }
+.odds-list li { display: grid; grid-template-columns: 4px 34px 1fr 38px 30px; align-items: center; gap: 6px; height: 22px; font-size: 12px; }
+.odds-code { font-weight: 700; }
+.odds-bar { height: 6px; background: #1d2230; border-radius: 3px; overflow: hidden; }
+.odds-bar span { display: block; height: 100%; border-radius: 3px; }
+.odds-pct { text-align: right; font-variant-numeric: tabular-nums; }
+.odds-change { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.odds-change.up { color: #3ecf6e; }
+.odds-change.down { color: #ff6b6b; }
+.odds svg { width: 100%; height: auto; display: block; }
+.odds .grid line { stroke: #222836; stroke-width: 1; }
+.odds .grid text, .odds .end-label { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.odds .end-label { fill: var(--text); font-weight: 700; }

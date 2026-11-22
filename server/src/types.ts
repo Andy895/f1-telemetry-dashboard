@@ -1,3 +1,7 @@
+import type { OddsBoard } from './odds/types.js';
+
+export type { OddsBoard, OddsPoint } from './odds/types.js';
+
 /** Topics mirror OpenF1 endpoint names so live MQTT topics (v1/<topic>) map 1:1 later. */
 export type Topic =
   | 'location'
@@ -68,9 +72,13 @@ export type ServerMessage =
   | { type: 'snapshot'; state: StoreSnapshot }
   | { type: 'events'; events: TelemetryEvent[] }
   | { type: 'clock'; clock: ClockState }
-  | { type: 'status'; status: 'idle' | 'loading' | 'ready' | 'error'; message?: string }
+  | { type: 'status'; status: 'idle' | 'loading' | 'ready' | 'error'; message?: string; /** 0..1 while loading, when known */ progress?: number }
   | { type: 'live'; live: LiveStatus }
-  | { type: 'focus'; drivers: number[] };
+  | { type: 'focus'; drivers: number[] }
+  /** Race-winner market prices (whole history), or null with a reason when there are none. */
+  | { type: 'odds'; odds: OddsBoard | null; note?: string }
+  /** New live market prices per driver_number, stamped with wall-clock time. */
+  | { type: 'odds_tick'; t: number; prices: Record<string, number> };
 
 export interface LiveStatus {
   /** Sponsor login present in .env */

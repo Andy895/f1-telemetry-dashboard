@@ -31,6 +31,20 @@ Live data needs an [OpenF1 sponsor account](https://openf1.org) (EUR 9.90/month)
 
 The **F1 TV** button sets a 30 second delay as a starting point. Use **−1 / +1** until flags and overtakes appear on the dashboard at the same moment as on your TV. The setting is remembered.
 
+## Insights (Phase 2)
+
+- Gap to leader chart for the top 10 over the last 40 laps.
+- Driver focus: click up to two drivers in the timing tower to see their speed, gear, throttle, brake, DRS and a 30 second speed trace.
+
+## Race winner odds (Phase 3)
+
+The **Race winner chance** panel shows each driver's chance of winning as priced by prediction markets: [Kalshi](https://kalshi.com/markets/kxf1race) first, [Polymarket](https://polymarket.com) when Kalshi has no market for the race. It lists the top six with their change over the last 10 minutes, and charts the top five over the session.
+
+- Works in replays (price history for that session) and live (prices refreshed every 15 seconds and held back by the same sync delay as everything else, so they move with your TV picture).
+- Read-only public market data: no account needed, nothing can place a bet. Prices are what traders are paying, not a prediction from this app.
+- Kalshi usually opens a race's market a few days before the race. Before then the panel says no market was found.
+- Odds are off in `npm run simulate` (old race, today's prices would not match). Set `ODDS=off` in `.env` to turn them off.
+
 ### Try live mode without a race
 
 `npm run simulate` starts a local stand-in for OpenF1 that replays the 2025 Abu Dhabi GP as if it were live now, and starts the dashboard connected to it. Open <http://localhost:8787>. No OpenF1 account is needed.
@@ -71,6 +85,7 @@ OpenF1 MQTT (live) ──────► live source ───┴─► sync del
 - `server/src/replay/` loads a session, merges every topic into one timeline, and plays it against the clock.
 - `server/src/openf1/auth.ts` exchanges the sponsor login for a 1-hour token and renews it; `server/src/live/` is the MQTT feed.
 - `server/src/pipeline/` sync-delay buffer and the latest-state store (new browser tabs get a snapshot).
+- `server/src/odds/` finds the race-winner market on Kalshi or Polymarket, loads price history and polls live prices.
 - `server/src/net/` WebSocket hub and HTTP server (serves the built web app).
 - `web/src/` React + Zustand dashboard; car dots are interpolated at 60 fps between 3.7 Hz samples.
 

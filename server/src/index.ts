@@ -5,6 +5,7 @@ import { Hub } from './net/hub.js';
 import { startHttpServer } from './net/http.js';
 import { TokenManager } from './openf1/auth.js';
 import { OpenF1Client } from './openf1/client.js';
+import { OddsService } from './odds/service.js';
 import { SIM_HTTP_PORT, SIM_MQTT_PORT } from './tools/sim-ports.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +36,11 @@ const client = new OpenF1Client(
   tokens,
   apiUrl,
 );
-const hub = new Hub(client, { tokens, mqttUsername: username, mqttUrl: process.env.OPENF1_MQTT_URL || undefined });
+// Race-winner odds from Kalshi (Polymarket as backup). The simulator replays an old race as if it
+// were live, so real-time market prices would not match it: odds are off there. ODDS=off turns them off.
+const oddsOn = !args.simulate && process.env.ODDS !== 'off';
+const odds = oddsOn ? new OddsService(client, join(repoRoot, 'data', 'cache')) : null;
+const hub = new Hub(client, { tokens, odds, mqttUsername: username, mqttUrl: process.env.OPENF1_MQTT_URL || undefined });
 hub.start();
 startHttpServer({ port, hub, client, webDist: join(repoRoot, 'web', 'dist') });
 console.log(tokens.configured ? 'OpenF1 sponsor login found: live data available.' : 'No OpenF1 login in .env: replays only.');
