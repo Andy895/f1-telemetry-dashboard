@@ -5,6 +5,7 @@ import { Hub } from './net/hub.js';
 import { startHttpServer } from './net/http.js';
 import { TokenManager } from './openf1/auth.js';
 import { OpenF1Client } from './openf1/client.js';
+import { OddsService } from './odds/service.js';
 import { SIM_HTTP_PORT, SIM_MQTT_PORT } from './tools/sim-ports.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -35,14 +36,31 @@ const client = new OpenF1Client(
   tokens,
   apiUrl,
 );
-const hub = new Hub(client, { tokens, mqttUsername: username, mqttUrl: process.env.OPENF1_MQTT_URL || undefined });
+// Race-winner odds from Kalshi (Polymarket as backup). ODDS=off turns them off. The simulator
+// serves that race's real Kalshi prices, shifted in time like the rest of the race.
+const odds =
+  process.env.ODDS === 'off'
+    ? null
+    : args.simulate
+      ? new OddsService(client, null, fetch, null, { kalshiBase: `http://localhost:${SIM_HTTP_PORT}/kalshi`, polymarket: false })
+      : new OddsService(client, join(repoRoot, 'data', 'cache'));
+const hub = new Hub(client, { tokens, odds, mqttUsername: username, mqttUrl: process.env.OPENF1_MQTT_URL || undefined });
 hub.start();
 startHttpServer({ port, hub, client, webDist: join(repoRoot, 'web', 'dist') });
 console.log(tokens.configured ? 'OpenF1 sponsor login found: live data available.' : 'No OpenF1 login in .env: replays only.');
 
 // Optional: preload a session, e.g. `npm start -- --session 9839`, or `--live`
-if (args.live || args.simulate) void hub.goLive();
+if (args.simulate) void goLiveWhenSimulatorIsUp();
+else if (args.live) void hub.goLive();
 else if (args.session) void hub.load(Number(args.session));
+
+/** The simulator starts alongside this server and needs a few seconds to load the race first. */
+async function goLiveWhenSimulatorIsUp() {
+  for (let i = 0; i < 60 && !hub.isLive; i++) {
+    await hub.goLive();
+    if (!hub.isLive) await new Promise((r) => setTimeout(r, 3000));
+  }
+}
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};

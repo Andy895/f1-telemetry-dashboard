@@ -14,6 +14,7 @@
     "start": "npm run build && npm run start -w server",
     "test": "npm run test -w server",
     "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "check-live": "npm run check-live -w server",
     "simulate": "npm run build && concurrently -k -n openf1-sim,server -c yellow,blue \"npm run simulate -w server\" \"npm run start:sim -w server\""
   },
   "devDependencies": {

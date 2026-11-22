@@ -15,6 +15,10 @@ import { fileURLToPath } from 'node:url';
 import Aedes from 'aedes';
 import { OpenF1Client } from '../openf1/client.js';
 import { loadSession } from '../replay/loader.js';
+import { JsonFetcher } from '../odds/http.js';
+import { findKalshiMarket } from '../odds/kalshi.js';
+import { OddsService, PRE_SESSION_MS } from '../odds/service.js';
+import type { OddsPoint } from '../odds/types.js';
 import type { OpenF1Record, TelemetryEvent } from '../types.js';
 import { SIM_HTTP_PORT, SIM_MQTT_PORT } from './sim-ports.js';
 
@@ -44,6 +48,55 @@ const shiftRecord = (r: OpenF1Record): OpenF1Record => {
 const events: TelemetryEvent[] = loaded.events.map((e) => ({ topic: e.topic, t: e.t + shift, data: shiftRecord(e.data) }));
 const session = { ...shiftRecord(loaded.session as unknown as OpenF1Record), session_name: `${loaded.session.session_name} (simulated)` };
 
+// --- Kalshi: that race's real winner-market prices, shifted the same way ---
+// The dashboard asks this stand-in exactly what it would ask Kalshi during a live race.
+// Loading takes ~30 s the first time, so the race starts right away and odds requests wait for it.
+const oddsReady = loadOdds();
+async function loadOdds() {
+  try {
+    const meeting = await new OddsService(client, null).meetingInfo(loaded.session);
+    const market = await findKalshiMarket(new JsonFetcher(), meeting, loaded.drivers);
+    if (!market) {
+      console.log('Simulator: no Kalshi market for this race, so no odds.');
+      return null;
+    }
+    console.log(`Simulator: loading Kalshi prices for "${market.title}"…`);
+    const series = new Map<number, OddsPoint[]>();
+    for (const [driver, ticker] of market.markets) {
+      const hist = await market.history(ticker, loaded.start - PRE_SESSION_MS, loaded.end);
+      series.set(driver, hist.map(([t, p]): OddsPoint => [t + shift, p]));
+    }
+    return { title: market.title, sub_title: `${meeting.name} ${meeting.year}`, year: meeting.year, series };
+  } catch (err) {
+    console.log(`Simulator: could not load Kalshi prices (${(err as Error).message}), so no odds.`);
+    return null;
+  }
+}
+
+function kalshi(odds: Awaited<typeof oddsReady>, path: string, params: Record<string, string>, now: number): unknown {
+  if (!odds) return path === 'events' ? { events: [] } : null;
+  const eventTicker = `KXF1RACE-SIM${String(odds.year % 100).padStart(2, '0')}`;
+  const shown = (pts: OddsPoint[]) => pts.filter((p) => p[0] <= now);
+  if (path === 'events') return { events: [{ event_ticker: eventTicker, title: odds.title, sub_title: odds.sub_title }], cursor: '' };
+  if (path === 'markets') {
+    return {
+      markets: [...odds.series].map(([driver, pts]) => ({
+        ticker: `SIM-${driver}`,
+        yes_sub_title: loaded.drivers.find((d) => d.driver_number === driver)?.full_name ?? String(driver),
+        last_price_dollars: String(shown(pts).at(-1)?.[1] ?? ''),
+      })),
+    };
+  }
+  const m = /^series\/KXF1RACE\/markets\/SIM-(\d+)\/candlesticks$/.exec(path);
+  if (m) {
+    const from = Number(params.start_ts) * 1000;
+    const to = Math.min(Number(params.end_ts) * 1000, now);
+    const pts = (odds.series.get(Number(m[1])) ?? []).filter((p) => p[0] >= from && p[0] <= to);
+    return { candlesticks: pts.map(([t, p]) => ({ end_period_ts: Math.round(t / 1000), price: { close: String(p) } })) };
+  }
+  return null;
+}
+
 // --- MQTT: publish records as their (shifted) time arrives ---
 const aedes = new Aedes();
 aedes.authenticate = (_c, _u, password, done) => done(null, String(password) === TOKEN);
@@ -63,6 +116,10 @@ createHttpServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   const json = (body: unknown, status = 200) => res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
   if (url.pathname === '/token') return json({ access_token: TOKEN, expires_in: '3600', token_type: 'bearer' });
+  if (url.pathname.startsWith('/kalshi/')) {
+    const body = kalshi(await oddsReady, url.pathname.slice('/kalshi/'.length), Object.fromEntries(url.searchParams), Date.now());
+    return body === null ? json({ error: 'not found' }, 404) : json(body);
+  }
   if (req.headers.authorization !== `Bearer ${TOKEN}`) return json({ detail: 'Unauthorized' }, 401);
 
   const endpoint = url.pathname.replace(/^\/v1\//, '');

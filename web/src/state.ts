@@ -6,6 +6,7 @@ import type {
   ClockState,
   DriverInfo,
   LiveStatus,
+  OddsBoard,
   OpenF1Record,
   ServerMessage,
   SessionInfo,
@@ -16,7 +17,7 @@ import type {
 
 export interface DashboardState extends Omit<StoreSnapshot, 'location'> {
   connected: boolean;
-  status: { status: 'idle' | 'loading' | 'ready' | 'error'; message?: string };
+  status: { status: 'idle' | 'loading' | 'ready' | 'error'; message?: string; progress?: number };
   session: SessionInfo | null;
   drivers: Record<string, DriverInfo>;
   track: TrackOutline | null;
@@ -25,6 +26,9 @@ export interface DashboardState extends Omit<StoreSnapshot, 'location'> {
   live: LiveStatus;
   /** Drivers whose telemetry is shown in the driver focus panel. */
   focus: number[];
+  /** Race-winner market prices, and why there are none when null. */
+  odds: OddsBoard | null;
+  oddsNote?: string;
 }
 
 export const useDashboard = create<DashboardState>(() => ({
@@ -37,6 +41,8 @@ export const useDashboard = create<DashboardState>(() => ({
   clock: null,
   live: { configured: false, feed: 'off' },
   focus: [],
+  odds: null,
+  oddsNote: undefined,
   gap_history: {},
   position: {},
   intervals: {},
@@ -73,7 +79,7 @@ export function connect() {
 function handle(msg: ServerMessage) {
   switch (msg.type) {
     case 'status':
-      useDashboard.setState({ status: { status: msg.status, message: msg.message } });
+      useDashboard.setState({ status: { status: msg.status, message: msg.message, progress: msg.progress } });
       break;
     case 'meta':
       resetCars();
@@ -82,6 +88,8 @@ function handle(msg: ServerMessage) {
         session: msg.session,
         track: msg.track,
         totalLaps: msg.totalLaps,
+        // A meta for the same session (a driver joined) keeps the odds; a new session clears them.
+        ...(useDashboard.getState().session?.session_key !== msg.session?.session_key ? { odds: null, oddsNote: undefined } : {}),
         drivers: Object.fromEntries(msg.drivers.map((d) => [String(d.driver_number), d])),
       });
       break;
@@ -102,6 +110,17 @@ function handle(msg: ServerMessage) {
     case 'focus':
       useDashboard.setState({ focus: msg.drivers });
       break;
+    case 'odds':
+      useDashboard.setState({ odds: msg.odds, oddsNote: msg.note });
+      break;
+    case 'odds_tick': {
+      const { odds } = useDashboard.getState();
+      if (!odds) break;
+      const series = { ...odds.series };
+      for (const [driver, p] of Object.entries(msg.prices)) series[driver] = [...(series[driver] ?? []), [msg.t, p]];
+      useDashboard.setState({ odds: { ...odds, series } });
+      break;
+    }
     case 'clock':
       syncClock(msg.clock);
       useDashboard.setState({ clock: { ...msg.clock, receivedAt: performance.now() } });

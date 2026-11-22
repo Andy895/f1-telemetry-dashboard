@@ -8,6 +8,8 @@ import { loadSession, loadLiveSnapshot } from '../replay/loader.js';
 import { ReplayPlayer } from '../replay/player.js';
 import { CarDataReplay } from '../replay/carData.js';
 import { outlineForCircuit } from '../track/circuit.js';
+import { PRE_SESSION_MS, type OddsService } from '../odds/service.js';
+import type { OddsBoard, OddsMarket } from '../odds/types.js';
 import type {
   ClientMessage,
   ClockState,
@@ -21,6 +23,8 @@ import type {
 
 const TICK_MS = 100;
 const CLOCK_EVERY_MS = 500;
+/** How often live market prices are fetched. */
+export const ODDS_POLL_MS = 15_000;
 
 type Send = (msg: ServerMessage) => void;
 type Status = 'idle' | 'loading' | 'ready' | 'error';
@@ -36,6 +40,9 @@ export interface HubOptions {
   tokens?: TokenManager | null;
   mqttUrl?: string;
   mqttUsername?: string;
+  /** Injected for tests. */
+  /** Race-winner odds. Left out, the dashboard shows no odds. */
+  odds?: OddsService | null;
   /** Injected for tests. */
   createLiveSource?: (onMessage: (m: LiveMessage) => void, onStatus: (s: LiveStatus['feed'], d?: string) => void) => { start(): Promise<void>; stop(): void };
 }
@@ -55,16 +62,24 @@ export class Hub {
   private focus: number[] = [];
   private live: { source: { start(): Promise<void>; stop(): void } } | null = null;
   private liveStatus: LiveStatus;
-  private status: { status: Status; message?: string } = { status: 'idle' };
+  private status: { status: Status; message?: string; progress?: number } = { status: 'idle' };
   private timer: NodeJS.Timeout | null = null;
   private lastClock = 0;
   private loadToken = 0;
+  private odds: { board: OddsBoard | null; note?: string } = { board: null };
+  private oddsMarket: OddsMarket | null = null;
+  private oddsTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly client: OpenF1Client,
     private readonly opts: HubOptions = {},
   ) {
     this.liveStatus = { configured: Boolean(opts.tokens?.configured), feed: 'off' };
+  }
+
+  /** True once a live session is loaded and streaming. */
+  get isLive(): boolean {
+    return this.live !== null && this.status.status === 'ready';
   }
 
   start(): void {
@@ -74,6 +89,7 @@ export class Hub {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.stopLive();
+    this.stopOdds();
   }
 
   connect(send: Send): () => void {
@@ -85,6 +101,7 @@ export class Hub {
       send(this.metaMessage());
       send({ type: 'snapshot', state: this.store.snapshot() });
       send({ type: 'clock', clock: this.clock() });
+      send({ type: 'odds', odds: this.odds.board, note: this.odds.note });
     }
     return () => this.clients.delete(send);
   }
@@ -123,9 +140,10 @@ export class Hub {
   async load(sessionKey: number): Promise<void> {
     const token = ++this.loadToken;
     this.stopLive();
+    this.stopOdds();
     this.setStatus('loading', 'Loading session');
     try {
-      const loaded = await loadSession(this.client, sessionKey, (m) => this.setStatus('loading', m));
+      const loaded = await loadSession(this.client, sessionKey, (m, f) => this.setStatus('loading', m, f));
       if (token !== this.loadToken) return; // a newer load started meanwhile
       this.meta = loaded;
       this.player = new ReplayPlayer(loaded.events, loaded.start, loaded.end);
@@ -133,6 +151,7 @@ export class Hub {
       this.broadcast(this.metaMessage());
       this.seek(loaded.start);
       this.setStatus('ready', `${loaded.events.length.toLocaleString()} events`);
+      void this.loadOdds(token, loaded.session, loaded.drivers, loaded.start - PRE_SESSION_MS, loaded.end, false);
     } catch (err) {
       if (token !== this.loadToken) return;
       this.setStatus('error', errorText(err));
@@ -146,6 +165,7 @@ export class Hub {
   async goLive(): Promise<void> {
     const token = ++this.loadToken;
     this.stopLive();
+    this.stopOdds();
     this.player = null;
     this.carReplay = null;
     if (!this.liveStatus.configured) {
@@ -176,6 +196,7 @@ export class Hub {
         return;
       }
       this.setStatus('ready', 'Live');
+      void this.loadOdds(token, snap.session, snap.drivers, Date.parse(snap.session.date_start) - PRE_SESSION_MS, Date.now(), true);
     } catch (err) {
       if (token !== this.loadToken) return;
       this.stopLive();
@@ -216,6 +237,44 @@ export class Hub {
         this.broadcast(this.metaMessage());
       }
     }
+  }
+
+  /**
+   * Load race-winner prices for the session in the background (the dashboard works without
+   * them). Live, keep polling the market; prices are stamped with real time, so the page's
+   * delayed clock lines them up with the TV picture like everything else.
+   */
+  private async loadOdds(token: number, session: SessionInfo, drivers: DriverInfo[], from: number, to: number, live: boolean): Promise<void> {
+    if (!this.opts.odds) return;
+    const result = await this.opts.odds.load(session, drivers, from, to).catch((err) => ({ board: null, market: null, note: `Odds unavailable: ${errorText(err)}` }));
+    if (token !== this.loadToken) return;
+    this.odds = { board: result.board, note: result.note };
+    this.oddsMarket = result.market;
+    this.broadcast({ type: 'odds', odds: result.board, note: result.note });
+    if (live && result.market) this.oddsTimer = setInterval(() => void this.pollOdds(token), ODDS_POLL_MS);
+  }
+
+  private async pollOdds(token: number): Promise<void> {
+    const market = this.oddsMarket;
+    const board = this.odds.board;
+    if (!market || !board || !this.opts.odds) return;
+    let prices: Record<string, number>;
+    try {
+      prices = await this.opts.odds.poll(market);
+    } catch {
+      return; // try again next time
+    }
+    if (token !== this.loadToken || Object.keys(prices).length === 0) return;
+    const t = Date.now();
+    for (const [driver, p] of Object.entries(prices)) (board.series[driver] ??= []).push([t, p]);
+    this.broadcast({ type: 'odds_tick', t, prices });
+  }
+
+  private stopOdds(): void {
+    if (this.oddsTimer) clearInterval(this.oddsTimer);
+    this.oddsTimer = null;
+    this.oddsMarket = null;
+    this.odds = { board: null };
   }
 
   private stopLive(): void {
@@ -293,9 +352,9 @@ export class Hub {
     return { type: 'meta', session: m?.session ?? null, drivers: m?.drivers ?? [], track: m?.track ?? null, totalLaps: m?.totalLaps ?? null };
   }
 
-  private setStatus(status: Status, message?: string): void {
-    this.status = { status, message };
-    this.broadcast({ type: 'status', status, message });
+  private setStatus(status: Status, message?: string, progress?: number): void {
+    this.status = { status, message, progress };
+    this.broadcast({ type: 'status', status, message, progress });
   }
 
   private setLive(patch: Partial<LiveStatus>): void {
