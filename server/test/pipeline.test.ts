@@ -46,6 +46,20 @@ describe('LiveStore', () => {
     expect(snap.laps['4']?.lap_number).toBe(4);
   });
 
+  it('records the gap to the leader at each new lap', () => {
+    const store = new LiveStore();
+    store.apply({ topic: 'position', t: 1, data: { driver_number: 1, position: 1 } });
+    store.apply({ topic: 'position', t: 1, data: { driver_number: 4, position: 2 } });
+    store.apply({ topic: 'intervals', t: 2, data: { driver_number: 4, gap_to_leader: 1.5 } });
+    store.apply({ topic: 'laps', t: 3, data: { driver_number: 1, lap_number: 5 } });
+    store.apply({ topic: 'laps', t: 3, data: { driver_number: 4, lap_number: 5 } });
+    store.apply({ topic: 'intervals', t: 4, data: { driver_number: 4, gap_to_leader: '+1 LAP' } });
+    store.apply({ topic: 'laps', t: 5, data: { driver_number: 4, lap_number: 6 } });
+    const snap = store.snapshot();
+    expect(snap.gap_history['1']).toEqual([[5, 0]]);
+    expect(snap.gap_history['4']).toEqual([[5, 1.5]]);
+  });
+
   it('keeps stint history per driver, replacing updated stints', () => {
     const store = new LiveStore();
     store.apply({ topic: 'stints', t: 1, data: { driver_number: 4, stint_number: 1, compound: 'MEDIUM', lap_end: 10 } });

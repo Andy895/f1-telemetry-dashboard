@@ -21,7 +21,8 @@ describe('parseLiveMessage', () => {
   it('routes sessions and drivers, and ignores unknown topics and bad JSON', () => {
     expect(parseLiveMessage('v1/sessions', '{"session_key":1}')?.kind).toBe('session');
     expect(parseLiveMessage('v1/drivers', '{"driver_number":1}')?.kind).toBe('driver');
-    expect(parseLiveMessage('v1/car_data', '{}')).toBeNull();
+    expect(parseLiveMessage('v1/overtakes', '{}')).toBeNull();
+    expect(parseLiveMessage('v1/car_data', '{"date":"2025-01-01T00:00:00Z","driver_number":1,"speed":300}')).toMatchObject({ event: { topic: 'car_data' } });
     expect(parseLiveMessage('v1/laps', 'not json')).toBeNull();
   });
 });

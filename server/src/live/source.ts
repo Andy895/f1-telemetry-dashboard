@@ -76,7 +76,7 @@ export class LiveSource {
       if (isAuthError(err.message)) tokens.invalidate();
       onStatus?.('error', err.message);
     });
-    await client.subscribeAsync([...TOPICS, 'sessions', 'drivers'].map((t) => `v1/${t}`));
+    await client.subscribeAsync([...TOPICS, 'car_data', 'sessions', 'drivers'].map((t) => `v1/${t}`));
     onStatus?.('connected');
     this.scheduleRefresh();
   }

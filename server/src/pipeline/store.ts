@@ -21,6 +21,7 @@ export class LiveStore {
       case 'laps':
         // Keep each driver's latest lap, plus their best.
         this.state.laps[driver] = data;
+        this.recordGap(driver, data);
         if (isFaster(data, this.state.best_laps[driver])) this.state.best_laps[driver] = data;
         break;
       case 'stints': {
@@ -40,7 +41,22 @@ export class LiveStore {
       case 'weather':
         this.state.weather = data;
         break;
+      case 'car_data':
+        // High-rate and only for focused drivers: passed straight through, not stored.
+        break;
     }
+  }
+
+  /** At each new lap, note the driver's gap to the leader, for the gap chart. */
+  private recordGap(driver: string, lap: OpenF1Record): void {
+    const lapNo = Number(lap.lap_number);
+    if (!Number.isFinite(lapNo)) return;
+    const pos = this.state.position[driver]?.position;
+    const gap = pos === 1 ? 0 : this.state.intervals[driver]?.gap_to_leader;
+    if (typeof gap !== 'number') return;
+    const history = (this.state.gap_history[driver] ??= []);
+    if (history.at(-1)?.[0] === lapNo) history[history.length - 1] = [lapNo, gap];
+    else history.push([lapNo, gap]);
   }
 
   reset(): void {
@@ -64,5 +80,5 @@ function pushCapped(list: OpenF1Record[], rec: OpenF1Record): void {
 }
 
 export function emptySnapshot(): StoreSnapshot {
-  return { location: {}, position: {}, intervals: {}, laps: {}, best_laps: {}, stints: {}, stint_history: {}, pit: [], race_control: [], weather: null };
+  return { location: {}, position: {}, intervals: {}, laps: {}, best_laps: {}, stints: {}, stint_history: {}, gap_history: {}, pit: [], race_control: [], weather: null };
 }

@@ -17,7 +17,7 @@ export function parseLiveMessage(topic: string, payload: Buffer | string, now = 
   }
   if (name === 'sessions') return { kind: 'session', data };
   if (name === 'drivers') return { kind: 'driver', data };
-  if (!TOPICS.includes(name as Topic)) return null;
+  if (!TOPICS.includes(name as Topic) && name !== 'car_data') return null;
   const t = name as Topic;
   if (t === 'location' && isEmptyLocation(data)) return null;
   // Stints carry no timestamp; live, "now" is the right moment for them.

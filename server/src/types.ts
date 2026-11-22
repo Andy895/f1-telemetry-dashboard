@@ -7,8 +7,11 @@ export type Topic =
   | 'stints'
   | 'pit'
   | 'race_control'
-  | 'weather';
+  | 'weather'
+  /** Per-car speed/throttle/brake/gear/DRS. Only streamed for drivers in focus. */
+  | 'car_data';
 
+/** Topics loaded and streamed for every session (car_data is on demand). */
 export const TOPICS: Topic[] = [
   'location',
   'position',
@@ -66,7 +69,8 @@ export type ServerMessage =
   | { type: 'events'; events: TelemetryEvent[] }
   | { type: 'clock'; clock: ClockState }
   | { type: 'status'; status: 'idle' | 'loading' | 'ready' | 'error'; message?: string }
-  | { type: 'live'; live: LiveStatus };
+  | { type: 'live'; live: LiveStatus }
+  | { type: 'focus'; drivers: number[] };
 
 export interface LiveStatus {
   /** Sponsor login present in .env */
@@ -99,6 +103,8 @@ export interface StoreSnapshot {
   stints: Record<string, OpenF1Record>;
   /** Every stint so far per driver, oldest first (for the tyre strategy chart). */
   stint_history: Record<string, OpenF1Record[]>;
+  /** Gap to the leader (s) each time a driver started a lap: [lap_number, gap]. */
+  gap_history: Record<string, [number, number][]>;
   pit: OpenF1Record[];
   race_control: OpenF1Record[];
   weather: OpenF1Record | null;
@@ -108,6 +114,7 @@ export interface StoreSnapshot {
 export type ClientMessage =
   | { type: 'load'; session_key: number }
   | { type: 'live' }
+  | { type: 'focus'; drivers: number[] }
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'speed'; speed: number }

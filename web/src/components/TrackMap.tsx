@@ -7,6 +7,7 @@ export function TrackMap() {
   const track = useDashboard((s) => s.track);
   const drivers = useDashboard((s) => s.drivers);
   const position = useDashboard((s) => s.position);
+  const focus = useDashboard((s) => s.focus);
   const dotRefs = useRef(new Map<string, SVGGElement>());
 
   const view = useMemo(() => (track ? orientTrack(track) : null), [track]);
@@ -36,8 +37,9 @@ export function TrackMap() {
   if (!view) return <section className="map muted">No track outline for this session</section>;
 
   const r = view.size / 110;
-  // Draw the leaders last so they sit on top.
-  const order = Object.keys(drivers).sort((a, b) => Number(position[b]?.position ?? 99) - Number(position[a]?.position ?? 99));
+  // Draw the leaders last so they sit on top, and focused drivers above everyone.
+  const rank = (id: string) => (focus.includes(Number(id)) ? -1 : Number(position[id]?.position ?? 99));
+  const order = Object.keys(drivers).sort((a, b) => rank(b) - rank(a));
 
   return (
     <section className="map">
@@ -55,6 +57,7 @@ export function TrackMap() {
               }}
               style={{ display: 'none' }}
             >
+              {focus.includes(Number(id)) && <circle r={r * 1.7} fill="none" stroke="#fff" strokeWidth={r * 0.25} />}
               <circle r={r} fill={`#${d.team_colour}`} stroke="#000" strokeWidth={r * 0.18} />
               <text x={r * 1.4} y={r * 0.45} fontSize={r * 1.5} className="car-label" strokeWidth={r * 0.4}>
                 {d.name_acronym}
